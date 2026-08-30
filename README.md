@@ -1,1 +1,1 @@
-# OmniRAG
+# Knowra
