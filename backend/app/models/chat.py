@@ -1,10 +1,10 @@
 import uuid
-
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String
+# pyrefly: ignore [missing-import]
+from sqlalchemy import Column, String, DateTime, ForeignKey, JSON
+# pyrefly: ignore [missing-import]
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-
 from app.models.base import Base
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -13,7 +13,6 @@ class Conversation(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     title = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
 
 class Message(Base):
     __tablename__ = "messages"

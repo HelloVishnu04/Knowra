@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, JSON
-from sqlalchemy.orm import relationship
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
+
 from app.models.base import Base
+
 
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
@@ -12,15 +15,19 @@ class KnowledgeBase(Base):
     description = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
 class Document(Base):
     __tablename__ = "documents"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id"), nullable=False)
     name = Column(String, nullable=False)
-    status = Column(String, default="pending") # pending, parsing, chunking, embedding, ready, failed
+    status = Column(
+        String, default="pending"
+    )  # pending, parsing, chunking, embedding, ready, failed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    knowledge_base = relationship("KnowledgeBase")
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase")
+
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
@@ -29,6 +36,7 @@ class DocumentVersion(Base):
     version = Column(Integer, default=1)
     file_path = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"

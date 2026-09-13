@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean
-from sqlalchemy.orm import relationship
+
+from sqlalchemy import Column, DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
+
 from app.models.base import Base
+
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -10,14 +13,16 @@ class Organization(Base):
     name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
 class Workspace(Base):
     __tablename__ = "workspaces"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     organization_id = Column(String, ForeignKey("organizations.id"), nullable=False)
     name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    organization = relationship("Organization")
+
+    organization: Mapped["Organization"] = relationship("Organization")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -26,6 +31,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -33,6 +39,6 @@ class WorkspaceMember(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     role = Column(String, default="member")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    workspace = relationship("Workspace")
-    user = relationship("User")
+
+    workspace: Mapped["Workspace"] = relationship("Workspace")
+    user: Mapped["User"] = relationship("User")
