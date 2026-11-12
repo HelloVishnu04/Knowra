@@ -6,21 +6,40 @@ readme = "README.md"
 authors = [
     { name = "Vishnu Kumar", email = "visnhu9027872285@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi[standard]>=0.141.1",
     "pydantic-settings>=2.15.0",
     "sqlalchemy>=2.0.52",
     "structlog>=26.1.0",
+    "httpx>=0.28",
+    "alembic>=1.16",
+    "psycopg[binary]>=3.2",
+    "arq>=0.26",
+    "qdrant-client>=1.20",
+    "boto3>=1.40",
+]
+
+[project.optional-dependencies]
+ingestion = [
+    "fastembed>=0.9,<1",
+    "docling>=2.50,<3",
+]
+eval = [
+    # Ragas 0.4.3 still imports the legacy VertexAI module removed in 0.4.x.
+    "langchain-community==0.3.31",
+    "ragas>=0.4,<0.5",
 ]
 
 
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
+    "pytest-asyncio>=1.0",
 ]
 
 [tool.ruff]
@@ -29,6 +48,10 @@ target-version = "py311"
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.12"
 plugins = ["sqlalchemy.ext.mypy.plugin"]
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["boto3", "botocore.*"]
+ignore_missing_imports = true

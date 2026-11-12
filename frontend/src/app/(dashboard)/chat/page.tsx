@@ -3,21 +3,34 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { API_URL, api } from '@/lib/api';
+import { Citation, Citations } from '@/components/citations';
+import { ChatStreamDecoder } from '@/lib/sse';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  citations?: Citation[];
 }
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [model, setModel] = useState('qwen:7b');
+  const [model, setModel] = useState('qwen:0.5b');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [bases, setBases] = useState<{id: string; name: string}[]>([]);
+  const [kb, setKb] = useState('');
+  useEffect(() => {
+    const selected = new URLSearchParams(window.location.search).get('kb');
+    api<{id: string; name: string}[]>('/knowledge-bases').then(value => {
+      setBases(value);
+      if (selected && value.some(base => base.id === selected)) setKb(selected);
+    }).catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -43,52 +56,52 @@ export default function ChatPage() {
         model: model,
         provider: 'ollama',
         stream: true
+        , knowledge_base_id: kb || null
       };
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error('Failed to fetch chat');
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(typeof error.detail === 'string' ? error.detail : 'Failed to fetch chat');
+      }
       if (!res.body) throw new Error('No readable stream');
 
       const reader = res.body.getReader();
-      const decoder = new TextDecoder();
+      const decoder = new ChatStreamDecoder();
       let done = false;
+      let completed = false;
 
       while (!done) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
         if (value) {
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.replace('data: ', '').trim();
+          for (const dataStr of decoder.push(value)) {
               if (dataStr === '[DONE]') {
                 done = true;
+                completed = true;
                 break;
               }
               if (!dataStr) continue;
-              try {
                 const data = JSON.parse(dataStr);
+                if (data.error) throw new Error(data.error);
                 setMessages(prev => 
-                  prev.map(m => m.id === assistantId ? { ...m, content: m.content + (data.content || '') } : m)
+                  prev.map(m => m.id === assistantId ? { ...m, content: m.content + (data.content || ''), citations: data.citations ?? m.citations } : m)
                 );
-              } catch (e) {
-                console.error("Error parsing SSE JSON", e, dataStr);
-              }
-            }
           }
         }
       }
+      await reader.cancel();
+      if (!completed) throw new Error('The response was interrupted. Please retry.');
     } catch (error) {
       console.error(error);
       setMessages(prev => 
-        prev.map(m => m.id === assistantId ? { ...m, content: 'Error: Could not reach the model.' } : m)
+        prev.map(m => m.id === assistantId ? { ...m, content: `Error: ${error instanceof Error ? error.message : 'Could not reach the model.'}` } : m)
       );
     } finally {
       setLoading(false);
@@ -99,6 +112,10 @@ export default function ChatPage() {
     <div className="flex flex-col h-full bg-white dark:bg-gray-800">
       <header className="h-14 border-b flex items-center px-4 justify-between flex-shrink-0">
         <h1 className="font-semibold">Local Chat Gateway</h1>
+        <select aria-label="Knowledge base" disabled={loading} value={kb} className="border rounded p-1 max-w-60" onChange={e => { setKb(e.target.value); setMessages([]); }}>
+          <option value="">General chat</option>
+          {bases.map(base => <option key={base.id} value={base.id}>{base.name}</option>)}
+        </select>
         <div className="flex items-center space-x-2 text-sm">
           <span className="text-gray-500">Model:</span>
           <select 
@@ -106,6 +123,7 @@ export default function ChatPage() {
             onChange={e => setModel(e.target.value)}
             className="border rounded px-2 py-1 bg-transparent"
           >
+            <option value="qwen:0.5b">qwen:0.5b (lightweight)</option>
             <option value="qwen:7b">qwen:7b</option>
             <option value="llama3:8b">llama3:8b</option>
           </select>
@@ -116,7 +134,7 @@ export default function ChatPage() {
         <div className="max-w-3xl mx-auto space-y-6 pb-20">
           {messages.length === 0 && (
             <div className="text-center text-gray-500 mt-20">
-              <p className="text-lg">Start a conversation with OmniRAG</p>
+              <p className="text-lg">Start a conversation with Knowra</p>
             </div>
           )}
           {messages.map((m) => (
@@ -128,6 +146,7 @@ export default function ChatPage() {
               )}
               <div className={`rounded-xl px-4 py-3 max-w-[80%] ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-gray-100 dark:bg-gray-700'}`}>
                 <div className="whitespace-pre-wrap">{m.content}</div>
+                {!!m.citations?.length && <Citations citations={m.citations} />}
               </div>
               {m.role === 'user' && (
                 <Avatar className="w-8 h-8 flex-shrink-0">

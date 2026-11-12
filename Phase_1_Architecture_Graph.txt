@@ -1,0 +1,115 @@
+====================================================================================================
+                        KNOWRA / OMNIRAG — PHASE 1 ARCHITECTURE GRAPH
+                             (Local Chat Gateway Architecture)
+====================================================================================================
+
+1. TOPOLOGICAL ASCII GRAPH (NODES & DIRECTED EDGES)
+----------------------------------------------------------------------------------------------------
+
+                        [ User / Web Browser ]
+                                  │
+         ┌────────────────────────┴────────────────────────┐
+         │ (Interacts)                                     │ (Authenticates)
+         ▼                                                 ▼
+[ frontend: ChatPage ]                             [ frontend: LoginPage ]
+  src/app/(dashboard)/chat/page.tsx                  src/app/(auth)/login/page.tsx
+         │                                                 │
+         ├───────────────────────┐                         │ POST /api/v1/auth/login
+         ▼                       ▼                         ▼
+[ frontend: ChatComposer ]  [ frontend: MessageList ]    [ backend: api/routes/auth.py ]
+  ChatComposer.tsx            MessageList.tsx              │               │
+         │                       ▲                         │ Validate      │ Persist User
+         ▼ Trigger               │ Render Token Stream     ▼               ▼
+[ frontend: SSEClientHook ]──────┼─────────────────► [ backend: core/security.py ]
+  hooks/useChatStream.ts         │                     │  (JWT Token Provider)
+         │                       │                     │               │
+         │ POST /api/v1/chat     │                     │ Verify Token  │
+         ▼ (SSE Stream Request)  │                     │               ▼
+[ backend: api/routes/chat.py ]──┴─────────────────────┘        [ PostgreSQL (Port 5432) ]
+  (Handles Chat & SSE Gen)                                      │  (User & Chat History)
+         │                                                      │       ▲
+         ├─────────────────────── Record Messages ──────────────┘       │
+         ▼                                                              │
+   [ models/chat.py ] ──────────────────────────────────────────────────┘
+         │
+         ▼ Dispatch Prompt
+[ backend: llm/gateway.py ] ──────────► (LLMGateway: Resolves 'fast' / chat role)
+         │
+         ▼ Enforces Contract
+[ backend: llm/base.py ] ─────────────► (LLMProvider: ABC generate() / stream_chat())
+         ▲
+         │ Implements
+[ backend: llm/ollama_provider.py ] ──► (OllamaProvider: HTTP Streaming Client)
+         │
+         ▼ HTTP POST http://ollama:11434/api/chat
+[ infra: Ollama Service ] ────────────► (Local Model Serving: Qwen / Llama)
+         │
+         ▼ Token Stream Yield (Chunks)
+[ backend: llm/ollama_provider.py ]
+         │
+         ▼ SSE Event Stream: data: {"token": "..."}
+[ backend: api/routes/chat.py ]
+         │
+         ▼ Chunked Transfer Stream
+[ frontend: SSEClientHook (useChatStream.ts) ]
+         │
+         ▼ Append Delta Tokens
+[ frontend: MessageList (MessageList.tsx) ]
+
+
+====================================================================================================
+2. GRAPH NODE DEFINITIONS
+====================================================================================================
+
+NODE ID       TYPE         MODULE PATH / LOCATION                          DESCRIPTION
+────────────────────────────────────────────────────────────────────────────────────────────────────
+User          Client       User Web Browser                                End-user sending prompts
+F_Auth        Frontend     frontend/src/app/(auth)/login/page.tsx          Login UI & credential capture
+F_Chat        Frontend     frontend/src/app/(dashboard)/chat/page.tsx      Main Chat UI container
+F_Comp        Frontend     frontend/src/components/chat/ChatComposer.tsx    Input box & submit action
+F_List        Frontend     frontend/src/components/chat/MessageList.tsx     Renders conversation messages
+F_Hook        Frontend     frontend/src/lib/hooks/useChatStream.ts         SSE stream listener hook
+B_Main        Backend      backend/app/main.py                             FastAPI entrypoint & middleware
+B_Config      Backend      backend/app/core/config.py                      Settings (Ollama, DB, JWT)
+B_Log         Backend      backend/app/core/logging.py                     structlog setup & run_id trace
+B_Sec         Backend      backend/app/core/security.py                    Password hashing & JWT validation
+R_Auth        Backend API  backend/app/api/routes/auth.py                  /api/v1/auth/* endpoints
+R_Chat        Backend API  backend/app/api/routes/chat.py                  /api/v1/chat endpoint (SSE)
+M_User        Data Model   backend/app/models/user.py                      User, Org & Workspace models
+M_Chat        Data Model   backend/app/models/chat.py                      Conversation & Message models
+L_Gate        LLM Layer    backend/app/llm/gateway.py                      LLMGateway role resolver
+L_Base        LLM Layer    backend/app/llm/base.py                         LLMProvider abstract interface
+L_Ollama      LLM Layer    backend/app/llm/ollama_provider.py              Ollama HTTP streaming client
+I_PG          Infra        Docker: postgres:16 (Port 5432)                 Relational persistent store
+I_Redis       Infra        Docker: redis:7 (Port 6379)                     Cache & connection management
+I_Ollama      Infra        Docker: ollama (Port 11434)                     Local inference engine
+
+
+====================================================================================================
+3. DIRECTED EDGES & DATA FLOW SPECIFICATION
+====================================================================================================
+
+SOURCE NODE       --> TARGET NODE       PROTOCOL / ACTION
+────────────────────────────────────────────────────────────────────────────────────────────────────
+User              --> F_Auth            Browser Form: Enter credentials
+User              --> F_Chat            Browser UI: Enter message prompt
+F_Auth            --> R_Auth            REST: POST /api/v1/auth/login (email, password)
+R_Auth            --> B_Sec             Internal: Hash verification & JWT issuance
+R_Auth            --> M_User            ORM: Query User & Org records
+M_User            --> I_PG              SQL: Select/Insert user profile
+F_Chat            --> F_Comp            Props: Mounts input composer
+F_Chat            --> F_List            Props: Passes messages state array
+F_Comp            --> F_Hook            Trigger: invoke startChatStream(prompt, convId)
+F_Hook            --> R_Chat            HTTP POST /api/v1/chat (Authorization: Bearer <JWT>)
+R_Chat            --> B_Sec             Internal: get_current_user(token)
+R_Chat            --> M_Chat            ORM: Persist user prompt message
+M_Chat            --> I_PG              SQL: INSERT INTO messages (role, content, conversation_id)
+R_Chat            --> L_Gate            Internal: gateway.get_provider(role='fast')
+L_Gate            --> L_Base            Polymorphism: Calls LLMProvider contract
+L_Base            --> L_Ollama          Implementation: OllamaProvider.stream_chat(...)
+L_Ollama          --> I_Ollama          HTTP POST http://ollama:11434/api/chat
+I_Ollama          --> L_Ollama          HTTP Stream: NDJSON chunks ({"message":{"content":"..."}})
+L_Ollama          --> R_Chat            AsyncGenerator[str, None]: yields text deltas
+R_Chat            --> F_Hook            HTTP SSE: data: {"token": "..."}\n\n
+F_Hook            --> F_List            State Update: Incremental append to assistant bubble
+====================================================================================================

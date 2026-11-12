@@ -1,0 +1,15 @@
+{"id":"identifier_launch","question":"What is the launch window and owner for KR-ALPHA-1042?","required_terms":["KR-ALPHA-1042"],"reference":"18 June 2027 at 09:30 UTC; Mira Chen owns the final decision."}
+{"id":"identifier_budget","question":"How much is allocated under FIN-77Q9 and who chairs its review?","required_terms":["FIN-77Q9"],"reference":"USD 480,000; Dilan Perera."}
+{"id":"identifier_backup","question":"How often must OPS-NOVA-318 backups run and when are restores tested?","required_terms":["OPS-NOVA-318"],"reference":"Every six hours; the first Tuesday of each month."}
+{"id":"identifier_vendor","question":"Which vendor owns VEN-COPPER-552 and when is renewal notice due?","required_terms":["VEN-COPPER-552"],"reference":"Northwind Sensors; 45 days before 30 September 2027."}
+{"id":"identifier_safety","question":"Where and when is the SAFE-ORBIT-903 inspection?","required_terms":["SAFE-ORBIT-903"],"reference":"West laboratory; 4 February 2027."}
+{"id":"identifier_retention","question":"What is DATA-LANTERN-221's retention period?","required_terms":["DATA-LANTERN-221"],"reference":"36 months."}
+{"id":"identifier_escalation","question":"Who owns CS-SABLE-611 and what is its response target?","required_terms":["CS-SABLE-611"],"reference":"Rafael Ortiz; 30 minutes."}
+{"id":"identifier_hardware","question":"How many gateways and Colombo pilot units are in HW-FALCON-808?","required_terms":["HW-FALCON-808"],"reference":"64 gateways; 12 reserved units."}
+{"id":"identifier_training","question":"Who must complete LMS-EMBER-417 and when does it expire?","required_terms":["LMS-EMBER-417"],"reference":"Production approvers; after 18 months."}
+{"id":"identifier_control","question":"How many reviewers does GRC-IVORY-730 require and how long is evidence kept?","required_terms":["GRC-IVORY-730"],"reference":"Two reviewers; seven years."}
+{"id":"identifier_api","question":"What changes under API-DELTA-266 and what is the deadline?","required_terms":["API-DELTA-266"],"reference":"Billing callbacks move to version three; 12 August 2027."}
+{"id":"identifier_incident","question":"What caused INC-MARBLE-159 and what corrective action was chosen?","required_terms":["INC-MARBLE-159"],"reference":"An expired signing certificate; automated certificate rotation."}
+{"id":"identifier_sample","question":"What temperature range applies to LAB-QUARTZ-845 and who is its custodian?","required_terms":["LAB-QUARTZ-845"],"reference":"Two to eight degrees Celsius; Hana Silva."}
+{"id":"identifier_hiring","question":"How many hires does HR-CEDAR-394 authorize and when do interviews begin?","required_terms":["HR-CEDAR-394"],"reference":"Six hires; the second week of March 2027."}
+{"id":"identifier_rollout","question":"Where does REGION-LOTUS-982 start and what is its exit criterion?","required_terms":["REGION-LOTUS-982"],"reference":"Galle; 99.9 percent availability for 21 consecutive days."}

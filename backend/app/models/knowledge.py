@@ -24,6 +24,7 @@ class Document(Base):
     status = Column(
         String, default="pending"
     )  # pending, parsing, chunking, embedding, ready, failed
+    error = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase")

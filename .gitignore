@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+.phase2-venv/
+data/
 env/
 venv/
 .pytest_cache/
