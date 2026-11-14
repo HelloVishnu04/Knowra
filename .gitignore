@@ -35,5 +35,13 @@ build/
 .vscode/
 .idea/
 
-#module
-kivo-promo
+# Untracked modules & sensitive/unintended files
+kivo-promo/
+hr_contacts.csv
+company_names.csv
+tmp/
+implementation.md
+OmniRAG_Project_Implementation_Report.docx
+docx_text.txt
+phase1.md
+software_trainee_campaign_100.csv
