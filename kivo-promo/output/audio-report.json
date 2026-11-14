@@ -1,0 +1,29 @@
+{
+  "duration_seconds": 30,
+  "sample_rate": 48000,
+  "bpm": 120,
+  "beat_frames": 15,
+  "cue_seconds": [
+    7,
+    12,
+    14.5,
+    17,
+    19,
+    24,
+    25.5,
+    27
+  ],
+  "cue_frames": [
+    210,
+    360,
+    435,
+    510,
+    570,
+    720,
+    765,
+    810
+  ],
+  "peak_dbfs": -3.0,
+  "rms_dbfs": -19.925201720971625,
+  "original_synthesized_score": true
+}

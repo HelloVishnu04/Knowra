@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from arq import create_pool
@@ -14,6 +15,7 @@ from app.models.knowledge import Document, DocumentChunk, DocumentVersion, Knowl
 from app.storage.objects import object_store
 
 router = APIRouter()
+SessionDependency = Annotated[Session, Depends(get_session)]
 
 
 class CreateKnowledgeBase(BaseModel):
@@ -41,7 +43,7 @@ async def enqueue(document_id: str):
 
 
 @router.get("/knowledge-bases")
-def list_kbs(session: Session = Depends(get_session)):
+def list_kbs(session: SessionDependency):
     return [
         {"id": kb.id, "name": kb.name, "description": kb.description}
         for kb in session.query(KnowledgeBase)
@@ -52,7 +54,7 @@ def list_kbs(session: Session = Depends(get_session)):
 
 
 @router.post("/knowledge-bases", status_code=201)
-def create_kb(body: CreateKnowledgeBase, session: Session = Depends(get_session)):
+def create_kb(body: CreateKnowledgeBase, session: SessionDependency):
     kb = KnowledgeBase(
         name=body.name.strip(),
         description=body.description,
@@ -64,7 +66,7 @@ def create_kb(body: CreateKnowledgeBase, session: Session = Depends(get_session)
 
 
 @router.get("/knowledge-bases/{kb_id}/documents")
-def list_documents(kb_id: str, session: Session = Depends(get_session)):
+def list_documents(kb_id: str, session: SessionDependency):
     require_kb(session, kb_id)
     return [
         document_json(d)
@@ -76,7 +78,7 @@ def list_documents(kb_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/knowledge-bases/{kb_id}/documents", status_code=202)
-async def upload(kb_id: str, file: UploadFile, session: Session = Depends(get_session)):
+async def upload(kb_id: str, file: UploadFile, session: SessionDependency):
     require_kb(session, kb_id)
     name = (file.filename or "").replace("\\", "/").split("/")[-1]
     suffix = Path(name).suffix.lower()
@@ -110,7 +112,7 @@ async def upload(kb_id: str, file: UploadFile, session: Session = Depends(get_se
         raise
     try:
         await enqueue(document_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - queue failures are persisted for retry
         doc.status, doc.error = (
             "failed",
             "Queue unavailable. Start Redis and retry indexing.",
@@ -120,7 +122,7 @@ async def upload(kb_id: str, file: UploadFile, session: Session = Depends(get_se
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/{document_id}/retry", status_code=202)
-async def retry(kb_id: str, document_id: str, session: Session = Depends(get_session)):
+async def retry(kb_id: str, document_id: str, session: SessionDependency):
     require_kb(session, kb_id)
     updated = (
         session.query(Document)
@@ -133,7 +135,7 @@ async def retry(kb_id: str, document_id: str, session: Session = Depends(get_ses
     doc = session.get(Document, document_id)
     try:
         await enqueue(document_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - queue failures are persisted for retry
         doc.status, doc.error = (
             "failed",
             "Queue unavailable. Start Redis and retry indexing.",
@@ -143,7 +145,7 @@ async def retry(kb_id: str, document_id: str, session: Session = Depends(get_ses
 
 
 @router.get("/chunks/{chunk_id}")
-def get_chunk(chunk_id: str, session: Session = Depends(get_session)):
+def get_chunk(chunk_id: str, session: SessionDependency):
     row = (
         session.query(DocumentChunk, Document)
         .join(Document)

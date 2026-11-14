@@ -13,6 +13,7 @@ from app.core.database import SessionLocal
 from app.models.knowledge import Document, DocumentChunk, DocumentVersion, KnowledgeBase
 from app.rag.documents import embed
 from app.storage.objects import object_store
+from app.workers.code_ingest import ingest_repository
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ async def ingest_document(ctx, document_id: str):
 
 
 class WorkerSettings:
-    functions: ClassVar = [ingest_document]
+    functions: ClassVar = [ingest_document, ingest_repository]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
     max_jobs = 1
     job_timeout = 1800

@@ -8,6 +8,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - object_data:/data/objects
+      - repository_data:/data/repositories
       - model_cache:/root/.cache
     depends_on:
       postgres:
@@ -15,7 +16,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -34,11 +35,34 @@ services:
       - RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-base}
       - RERANKER_CANDIDATE_LIMIT=${RERANKER_CANDIDATE_LIMIT:-20}
       - CHUNK_TOKENIZER=${CHUNK_TOKENIZER:-sentence-transformers/all-MiniLM-L6-v2}
+      - SQL_DATABASE_URL=postgresql://knowra_reader:reader-password@postgres:5432/omnirag
+      - SQL_ALLOWED_TABLES=${SQL_ALLOWED_TABLES:-public.knowledge_bases,public.documents}
+      - SQL_SENSITIVE_TABLES=${SQL_SENSITIVE_TABLES:-public.documents}
+      - DEFAULT_ROW_LIMIT=${DEFAULT_ROW_LIMIT:-100}
+      - STATEMENT_TIMEOUT_MS=${STATEMENT_TIMEOUT_MS:-10000}
+      - CODE_REPOSITORY_PATH=/data/repositories
+      - CODE_LOCAL_ROOT=${CODE_LOCAL_ROOT:-}
+      - CODE_GIT_ALLOWED_HOSTS=${CODE_GIT_ALLOWED_HOSTS:-github.com,gitlab.com}
+      - CODE_COLLECTION=${CODE_COLLECTION:-code_symbols_phase6}
+      - CODE_MAX_ARCHIVE_BYTES=${CODE_MAX_ARCHIVE_BYTES:-52428800}
+      - CODE_MAX_EXTRACTED_BYTES=${CODE_MAX_EXTRACTED_BYTES:-262144000}
+      - CODE_MAX_FILES=${CODE_MAX_FILES:-20000}
+      - CODE_MAX_SOURCE_BYTES=${CODE_MAX_SOURCE_BYTES:-1048576}
+      - SANDBOX_EXECUTION_ENABLED=${SANDBOX_EXECUTION_ENABLED:-false}
+      - SANDBOX_QUEUE=${SANDBOX_QUEUE:-queue:sandbox}
+      - SANDBOX_PYTHON_IMAGE=${SANDBOX_PYTHON_IMAGE:-knowra-sandbox-python:phase8}
+      - SANDBOX_NODE_IMAGE=${SANDBOX_NODE_IMAGE:-knowra-sandbox-node:phase8}
+      - SANDBOX_WALL_TIMEOUT_SECONDS=${SANDBOX_WALL_TIMEOUT_SECONDS:-60}
+      - SANDBOX_MEMORY_BYTES=${SANDBOX_MEMORY_BYTES:-536870912}
+      - SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-128}
+      - SANDBOX_SNAPSHOT_BYTES=${SANDBOX_SNAPSHOT_BYTES:-10485760}
+      - SANDBOX_OUTPUT_BYTES=${SANDBOX_OUTPUT_BYTES:-1048576}
   worker-ingest:
     build: ./backend
-    command: ["arq", "app.workers.ingest.WorkerSettings"]
+    command: [ "arq", "app.workers.ingest.WorkerSettings" ]
     volumes:
       - object_data:/data/objects
+      - repository_data:/data/repositories
       - model_cache:/root/.cache
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/omnirag
@@ -50,6 +74,13 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - SPARSE_MODEL=${SPARSE_MODEL:-Qdrant/bm25}
       - CHUNK_TOKENIZER=${CHUNK_TOKENIZER:-sentence-transformers/all-MiniLM-L6-v2}
+      - CODE_REPOSITORY_PATH=/data/repositories
+      - CODE_LOCAL_ROOT=${CODE_LOCAL_ROOT:-}
+      - CODE_GIT_ALLOWED_HOSTS=${CODE_GIT_ALLOWED_HOSTS:-github.com,gitlab.com}
+      - CODE_COLLECTION=${CODE_COLLECTION:-code_symbols_phase6}
+      - CODE_MAX_EXTRACTED_BYTES=${CODE_MAX_EXTRACTED_BYTES:-262144000}
+      - CODE_MAX_FILES=${CODE_MAX_FILES:-20000}
+      - CODE_MAX_SOURCE_BYTES=${CODE_MAX_SOURCE_BYTES:-1048576}
     depends_on:
       api:
         condition: service_healthy
@@ -69,26 +100,64 @@ services:
     depends_on:
       - api
 
+  worker-sandbox:
+    profiles: [ "sandbox" ]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.sandbox-worker
+    command: [ "arq", "app.workers.sandbox.WorkerSettings" ]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/omnirag
+      - REDIS_URL=redis://redis:6379/0
+      - SANDBOX_QUEUE=${SANDBOX_QUEUE:-queue:sandbox}
+      - SANDBOX_PYTHON_IMAGE=${SANDBOX_PYTHON_IMAGE:-knowra-sandbox-python:phase8}
+      - SANDBOX_NODE_IMAGE=${SANDBOX_NODE_IMAGE:-knowra-sandbox-node:phase8}
+      - SANDBOX_WALL_TIMEOUT_SECONDS=${SANDBOX_WALL_TIMEOUT_SECONDS:-60}
+      - SANDBOX_MEMORY_BYTES=${SANDBOX_MEMORY_BYTES:-536870912}
+      - SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-128}
+      - SANDBOX_OUTPUT_BYTES=${SANDBOX_OUTPUT_BYTES:-1048576}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sandbox-python:
+    profiles: [ "sandbox" ]
+    build: ./infra/sandbox/python
+    image: ${SANDBOX_PYTHON_IMAGE:-knowra-sandbox-python:phase8}
+    command: [ "true" ]
+
+  sandbox-node:
+    profiles: [ "sandbox" ]
+    build: ./infra/sandbox/node
+    image: ${SANDBOX_NODE_IMAGE:-knowra-sandbox-node:phase8}
+    command: [ "true" ]
+
   postgres:
     image: postgres:16
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d omnirag"]
+      test: [ "CMD-SHELL", "pg_isready -U user -d omnirag" ]
       interval: 5s
       timeout: 5s
       retries: 12
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=omnirag
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/001_readonly.sql:/docker-entrypoint-initdb.d/001_readonly.sql:ro
 
   redis:
-    image: redis:7
+    # LangGraph's Redis checkpointer needs RedisJSON and RediSearch (built into Redis 8).
+    image: redis:8
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -106,7 +175,7 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    profiles: ["container-ollama"]
+    profiles: [ "container-ollama" ]
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
@@ -114,6 +183,7 @@ services:
 
 volumes:
   object_data:
+  repository_data:
   model_cache:
   postgres_data:
   redis_data:

@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.agents import traces
 from app.api.routes import chat, knowledge
 from app.core.config import settings
 from app.core.database import get_session
@@ -50,6 +51,7 @@ def database(monkeypatch, tmp_path):
     app.dependency_overrides[get_session] = sessions
     monkeypatch.setattr(ingest, "SessionLocal", factory)
     monkeypatch.setattr(documents, "SessionLocal", factory)
+    monkeypatch.setattr(traces, "SessionLocal", factory)
     monkeypatch.setattr(settings, "OBJECT_STORE_PATH", str(tmp_path))
     monkeypatch.setattr(knowledge, "enqueue", AsyncMock())
     yield factory

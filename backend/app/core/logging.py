@@ -1,5 +1,7 @@
 import logging
+
 import structlog
+
 
 def setup_logging() -> None:
     structlog.configure(

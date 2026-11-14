@@ -1,0 +1,19 @@
+{"id":"direct_greeting","query":"Hello, how are you?","knowledge_base_id":null,"expected_route":"direct","expected_sources":[]}
+{"id":"direct_writing","query":"Help me write a friendly opening sentence","knowledge_base_id":null,"expected_route":"direct","expected_sources":[]}
+{"id":"document_selected_kb","query":"Summarize the main findings","knowledge_base_id":"kb","expected_route":"document","expected_sources":["document"]}
+{"id":"document_explicit","query":"What does the uploaded PDF say?","knowledge_base_id":null,"expected_route":"document","expected_sources":["document"]}
+{"id":"document_citation","query":"Give me a page citation from this file","knowledge_base_id":"kb","expected_route":"document","expected_sources":["document"]}
+{"id":"web_latest","query":"What is the latest product news?","knowledge_base_id":null,"expected_route":"web","expected_sources":["web"]}
+{"id":"web_url","query":"Review https://example.com/launch","knowledge_base_id":null,"expected_route":"web","expected_sources":["web"]}
+{"id":"sql_rows","query":"Count the rows in the customers table with SQL","knowledge_base_id":null,"expected_route":"sql","expected_sources":["sql"]}
+{"id":"sql_aggregate","query":"What is the average order value in the database?","knowledge_base_id":null,"expected_route":"sql","expected_sources":["sql"]}
+{"id":"code_debug","query":"Debug this repository function","knowledge_base_id":null,"expected_route":"code","expected_sources":["code"]}
+{"id":"code_trace","query":"Explain this stack trace and source file","knowledge_base_id":null,"expected_route":"code","expected_sources":["code"]}
+{"id":"code_implement","query":"Implement rate limiting in this repository","knowledge_base_id":null,"repository_id":"repo","expected_route":"code","expected_sources":["code"]}
+{"id":"code_refactor","query":"Refactor the authentication code","knowledge_base_id":null,"repository_id":"repo","expected_route":"code","expected_sources":["code"]}
+{"id":"code_multifile","query":"Update the API implementation and its repository tests","knowledge_base_id":null,"repository_id":"repo","expected_route":"code","expected_sources":["code"]}
+{"id":"multi_document_web","query":"Compare this document with the latest web news","knowledge_base_id":"kb","expected_route":"multi","expected_sources":["document","web"]}
+{"id":"multi_document_code","query":"Compare the uploaded guidance with the repository code","knowledge_base_id":"kb","expected_route":"multi","expected_sources":["document","code"]}
+{"id":"multi_web_sql","query":"Compare the latest online figures with the database rows","knowledge_base_id":null,"expected_route":"multi","expected_sources":["web","sql"]}
+{"id":"multi_sql_code","query":"Find the SQL table used by this repository function","knowledge_base_id":null,"expected_route":"multi","expected_sources":["sql","code"]}
+{"id":"multi_all_available","query":"Check the latest web news, database schema, and repository code","knowledge_base_id":"kb","expected_route":"multi","expected_sources":["document","web","sql","code"]}

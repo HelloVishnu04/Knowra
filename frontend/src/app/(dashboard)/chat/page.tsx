@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,8 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   citations?: Citation[];
+  runId?: string;
+  route?: string;
 }
 
 export default function ChatPage() {
@@ -24,11 +27,18 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [bases, setBases] = useState<{id: string; name: string}[]>([]);
   const [kb, setKb] = useState('');
+  const [repositories, setRepositories] = useState<{id: string; name: string; status: string}[]>([]);
+  const [repositoryId, setRepositoryId] = useState('');
   useEffect(() => {
     const selected = new URLSearchParams(window.location.search).get('kb');
+    const selectedRepository = new URLSearchParams(window.location.search).get('repository');
     api<{id: string; name: string}[]>('/knowledge-bases').then(value => {
       setBases(value);
       if (selected && value.some(base => base.id === selected)) setKb(selected);
+    }).catch(console.error);
+    api<{id: string; name: string; status: string}[]>('/repositories').then(value => {
+      setRepositories(value.filter(repository => repository.status === 'ready'));
+      if (selectedRepository && value.some(repository => repository.id === selectedRepository && repository.status === 'ready')) setRepositoryId(selectedRepository);
     }).catch(console.error);
   }, []);
 
@@ -57,6 +67,7 @@ export default function ChatPage() {
         provider: 'ollama',
         stream: true
         , knowledge_base_id: kb || null
+        , repository_id: repositoryId || null
       };
 
       const apiUrl = API_URL;
@@ -90,8 +101,14 @@ export default function ChatPage() {
               if (!dataStr) continue;
                 const data = JSON.parse(dataStr);
                 if (data.error) throw new Error(data.error);
-                setMessages(prev => 
-                  prev.map(m => m.id === assistantId ? { ...m, content: m.content + (data.content || ''), citations: data.citations ?? m.citations } : m)
+                setMessages(prev =>
+                  prev.map(m => m.id === assistantId ? {
+                    ...m,
+                    content: m.content + (data.content || ''),
+                    citations: data.citations ?? m.citations,
+                    runId: data.run_id ?? m.runId,
+                    route: data.route ?? m.route,
+                  } : m)
                 );
           }
         }
@@ -115,6 +132,10 @@ export default function ChatPage() {
         <select aria-label="Knowledge base" disabled={loading} value={kb} className="border rounded p-1 max-w-60" onChange={e => { setKb(e.target.value); setMessages([]); }}>
           <option value="">General chat</option>
           {bases.map(base => <option key={base.id} value={base.id}>{base.name}</option>)}
+        </select>
+        <select aria-label="Code repository" disabled={loading} value={repositoryId} className="border rounded p-1 max-w-60" onChange={e => { setRepositoryId(e.target.value); setMessages([]); }}>
+          <option value="">No code repository</option>
+          {repositories.map(repository => <option key={repository.id} value={repository.id}>{repository.name}</option>)}
         </select>
         <div className="flex items-center space-x-2 text-sm">
           <span className="text-gray-500">Model:</span>
@@ -147,6 +168,7 @@ export default function ChatPage() {
               <div className={`rounded-xl px-4 py-3 max-w-[80%] ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-gray-100 dark:bg-gray-700'}`}>
                 <div className="whitespace-pre-wrap">{m.content}</div>
                 {!!m.citations?.length && <Citations citations={m.citations} />}
+                {m.role === 'assistant' && m.runId && <Link href={`/runs/${m.runId}`} className="mt-3 block border-t pt-2 text-xs underline opacity-70">View {m.route ? `${m.route} ` : ''}run trace →</Link>}
               </div>
               {m.role === 'user' && (
                 <Avatar className="w-8 h-8 flex-shrink-0">
