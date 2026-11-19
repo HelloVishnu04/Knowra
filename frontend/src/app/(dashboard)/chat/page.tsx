@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { API_URL, api } from '@/lib/api';
+import { API_URL, api, ModelProvider } from '@/lib/api';
 import { Citation, Citations } from '@/components/citations';
 import { ChatStreamDecoder } from '@/lib/sse';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,7 +23,9 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [model, setModel] = useState('qwen:0.5b');
+  const [providers, setProviders] = useState<ModelProvider[]>([]);
+  const [providerId, setProviderId] = useState('');
+  const [model, setModel] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [bases, setBases] = useState<{id: string; name: string}[]>([]);
   const [kb, setKb] = useState('');
@@ -40,7 +42,24 @@ export default function ChatPage() {
       setRepositories(value.filter(repository => repository.status === 'ready'));
       if (selectedRepository && value.some(repository => repository.id === selectedRepository && repository.status === 'ready')) setRepositoryId(selectedRepository);
     }).catch(console.error);
+    api<ModelProvider[]>('/providers').then(value => {
+      const enabled = value.filter(provider => provider.is_enabled);
+      setProviders(enabled);
+      if (enabled.length) {
+        setProviderId(enabled[0].id);
+        setModel(enabled[0].models[0] || '');
+      }
+    }).catch(console.error);
   }, []);
+
+  const activeProvider = providers.find(provider => provider.id === providerId);
+
+  function selectProvider(id: string) {
+    const provider = providers.find(item => item.id === id);
+    setProviderId(id);
+    setModel(provider?.models[0] || '');
+    setMessages([]);
+  }
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -50,7 +69,7 @@ export default function ChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if (!input.trim() || loading || !providerId || !model) return;
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
@@ -64,7 +83,7 @@ export default function ChatPage() {
       const payload = {
         messages: [...messages, userMessage].map(m => ({ role: m.role, content: m.content })),
         model: model,
-        provider: 'ollama',
+        provider: providerId,
         stream: true
         , knowledge_base_id: kb || null
         , repository_id: repositoryId || null
@@ -74,6 +93,7 @@ export default function ChatPage() {
       const res = await fetch(`${apiUrl}/api/v1/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload)
       });
 
@@ -127,8 +147,8 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-800">
-      <header className="h-14 border-b flex items-center px-4 justify-between flex-shrink-0">
-        <h1 className="font-semibold">Local Chat Gateway</h1>
+      <header className="min-h-14 border-b flex flex-wrap items-center gap-3 px-4 py-2 justify-between flex-shrink-0">
+        <h1 className="font-semibold">Knowra Chat</h1>
         <select aria-label="Knowledge base" disabled={loading} value={kb} className="border rounded p-1 max-w-60" onChange={e => { setKb(e.target.value); setMessages([]); }}>
           <option value="">General chat</option>
           {bases.map(base => <option key={base.id} value={base.id}>{base.name}</option>)}
@@ -137,23 +157,43 @@ export default function ChatPage() {
           <option value="">No code repository</option>
           {repositories.map(repository => <option key={repository.id} value={repository.id}>{repository.name}</option>)}
         </select>
-        <div className="flex items-center space-x-2 text-sm">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-500">Provider:</span>
+          <select
+            aria-label="Model provider"
+            value={providerId}
+            onChange={event => selectProvider(event.target.value)}
+            className="border rounded px-2 py-1 bg-transparent"
+          >
+            {!providers.length && <option value="">Not configured</option>}
+            {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+          </select>
           <span className="text-gray-500">Model:</span>
           <select 
             value={model} 
             onChange={e => setModel(e.target.value)}
             className="border rounded px-2 py-1 bg-transparent"
           >
-            <option value="qwen:0.5b">qwen:0.5b (lightweight)</option>
-            <option value="qwen:7b">qwen:7b</option>
-            <option value="llama3:8b">llama3:8b</option>
+            {!activeProvider?.models.length && <option value="">No models</option>}
+            {activeProvider?.models.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
+          <Link href="/settings/models" className="rounded border px-2 py-1 text-xs hover:bg-slate-50">Configure</Link>
         </div>
       </header>
 
       <ScrollArea className="flex-1 p-4">
         <div className="max-w-3xl mx-auto space-y-6 pb-20">
-          {messages.length === 0 && (
+          {!providers.length && (
+            <div className="mx-auto mt-16 max-w-xl rounded-xl border border-dashed bg-slate-50 p-8 text-center">
+              <p className="text-lg font-medium text-slate-800">Connect a model provider to start chatting</p>
+              <p className="mt-2 text-sm text-slate-500">Add Ollama, LM Studio, or an OpenAI-compatible API. No model is downloaded automatically.</p>
+              <Link href="/settings/models" className="mt-5 inline-block rounded-md bg-slate-900 px-4 py-2 text-sm text-white">Add a provider</Link>
+            </div>
+          )}
+          {!!providers.length && !activeProvider?.models.length && (
+            <div className="mx-auto mt-16 max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-800">This provider has no model IDs. Add one manually or use Discover models in <Link href="/settings/models" className="underline">Models & Providers</Link>.</div>
+          )}
+          {messages.length === 0 && !!providerId && !!model && (
             <div className="text-center text-gray-500 mt-20">
               <p className="text-lg">Start a conversation with Knowra</p>
             </div>
@@ -188,13 +228,13 @@ export default function ChatPage() {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask anything..."
             className="w-full pr-12 rounded-full shadow-sm border-gray-300 dark:border-gray-600 focus-visible:ring-primary"
-            disabled={loading}
+            disabled={loading || !providerId || !model}
           />
           <Button 
             type="submit" 
             size="icon" 
             className="absolute right-1 rounded-full h-8 w-8"
-            disabled={loading || !input.trim()}
+            disabled={loading || !input.trim() || !providerId || !model}
           >
             <span className="sr-only">Send</span>
             &rarr;

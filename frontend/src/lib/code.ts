@@ -4,6 +4,12 @@ export type Repository = {
   source_type: 'zip' | 'git' | 'local';
   source_uri?: string | null;
   status: string;
+  source_state: string;
+  parse_state: string;
+  index_state: string;
+  parse_warning_count: number;
+  parse_warnings: { path: string; code: string }[];
+  job?: { id: string; state: string; progress: string; attempt: number; error_code?: string | null } | null;
   error?: string | null;
   default_branch?: string | null;
   indexed_at?: string | null;

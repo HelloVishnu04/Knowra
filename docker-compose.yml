@@ -16,7 +16,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -26,12 +26,15 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - ALLOW_MODEL_DOWNLOADS=${ALLOW_MODEL_DOWNLOADS:-false}
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
       - OBJECT_STORE_PATH=/data/objects
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - SPARSE_MODEL=${SPARSE_MODEL:-Qdrant/bm25}
       - HYBRID_RETRIEVAL_ENABLED=${HYBRID_RETRIEVAL_ENABLED:-true}
       - RETRIEVAL_CANDIDATE_LIMIT=${RETRIEVAL_CANDIDATE_LIMIT:-40}
-      - RERANKER_ENABLED=${RERANKER_ENABLED:-true}
+      - RERANKER_ENABLED=${RERANKER_ENABLED:-false}
       - RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-base}
       - RERANKER_CANDIDATE_LIMIT=${RERANKER_CANDIDATE_LIMIT:-20}
       - CHUNK_TOKENIZER=${CHUNK_TOKENIZER:-sentence-transformers/all-MiniLM-L6-v2}
@@ -48,6 +51,9 @@ services:
       - CODE_MAX_EXTRACTED_BYTES=${CODE_MAX_EXTRACTED_BYTES:-262144000}
       - CODE_MAX_FILES=${CODE_MAX_FILES:-20000}
       - CODE_MAX_SOURCE_BYTES=${CODE_MAX_SOURCE_BYTES:-1048576}
+      - CODE_INDEX_EMBEDDINGS=${CODE_INDEX_EMBEDDINGS:-false}
+      - CODE_PARSER_TIMEOUT_SECONDS=${CODE_PARSER_TIMEOUT_SECONDS:-20}
+      - CODE_PARSER_MEMORY_MB=${CODE_PARSER_MEMORY_MB:-512}
       - SANDBOX_EXECUTION_ENABLED=${SANDBOX_EXECUTION_ENABLED:-false}
       - SANDBOX_QUEUE=${SANDBOX_QUEUE:-queue:sandbox}
       - SANDBOX_PYTHON_IMAGE=${SANDBOX_PYTHON_IMAGE:-knowra-sandbox-python:phase8}
@@ -57,6 +63,22 @@ services:
       - SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-128}
       - SANDBOX_SNAPSHOT_BYTES=${SANDBOX_SNAPSHOT_BYTES:-10485760}
       - SANDBOX_OUTPUT_BYTES=${SANDBOX_OUTPUT_BYTES:-1048576}
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-false}
+      - JWT_SECRET=${JWT_SECRET:-local-development-change-me}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-8}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - APP_ENVIRONMENT=${APP_ENVIRONMENT:-development}
+      - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-true}
+      - AUTH_FAILURE_LIMIT=${AUTH_FAILURE_LIMIT:-5}
+      - AUTH_FAILURE_WINDOW_MINUTES=${AUTH_FAILURE_WINDOW_MINUTES:-15}
+      - AUTH_LOCKOUT_MINUTES=${AUTH_LOCKOUT_MINUTES:-15}
+      - PROVIDER_BLOCK_PRIVATE_NETWORKS=${PROVIDER_BLOCK_PRIVATE_NETWORKS:-false}
+      - PROVIDER_PRIVATE_HOST_ALLOWLIST=${PROVIDER_PRIVATE_HOST_ALLOWLIST:-}
+      - PROVIDER_ENCRYPTION_ACTIVE_KEY_ID=${PROVIDER_ENCRYPTION_ACTIVE_KEY_ID:-local-v1}
+      - PROVIDER_ENCRYPTION_KEYS=${PROVIDER_ENCRYPTION_KEYS:-}
+      - PROVIDER_ALLOW_LEGACY_JWT_KEY=${PROVIDER_ALLOW_LEGACY_JWT_KEY:-true}
   worker-ingest:
     build: ./backend
     command: [ "arq", "app.workers.ingest.WorkerSettings" ]
@@ -70,6 +92,9 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - ALLOW_MODEL_DOWNLOADS=${ALLOW_MODEL_DOWNLOADS:-false}
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
       - OBJECT_STORE_PATH=/data/objects
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - SPARSE_MODEL=${SPARSE_MODEL:-Qdrant/bm25}
@@ -81,6 +106,9 @@ services:
       - CODE_MAX_EXTRACTED_BYTES=${CODE_MAX_EXTRACTED_BYTES:-262144000}
       - CODE_MAX_FILES=${CODE_MAX_FILES:-20000}
       - CODE_MAX_SOURCE_BYTES=${CODE_MAX_SOURCE_BYTES:-1048576}
+      - CODE_INDEX_EMBEDDINGS=${CODE_INDEX_EMBEDDINGS:-false}
+      - CODE_PARSER_TIMEOUT_SECONDS=${CODE_PARSER_TIMEOUT_SECONDS:-20}
+      - CODE_PARSER_MEMORY_MB=${CODE_PARSER_MEMORY_MB:-512}
     depends_on:
       api:
         condition: service_healthy

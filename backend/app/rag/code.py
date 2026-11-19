@@ -10,8 +10,10 @@ from app.rag.base import RetrievalResult, RetrievedChunk, Retriever
 from app.rag.documents import embed
 
 
-def code_scope_filter(workspace_id: str, repository_id: str) -> models.Filter:
-    return models.Filter(
+def code_scope_filter(
+    workspace_id: str, repository_id: str, generation: str | None = None
+) -> models.Filter:
+    scope = models.Filter(
         must=[
             models.FieldCondition(
                 key="workspace_id", match=models.MatchValue(value=workspace_id)
@@ -28,6 +30,13 @@ def code_scope_filter(workspace_id: str, repository_id: str) -> models.Filter:
             ),
         ]
     )
+    if generation:
+        scope.must.append(
+            models.FieldCondition(
+                key="generation", match=models.MatchValue(value=generation)
+            )
+        )
+    return scope
 
 
 class CodeRetriever(Retriever):
@@ -51,6 +60,7 @@ class CodeRetriever(Retriever):
                 or repository.status != "ready"
             ):
                 raise ValueError("Indexed repository not found")
+            generation = (repository.metadata_json or {}).get("index_generation")
 
         limit = min(max(top_k, 1), 20)
         candidates = min(max(limit, settings.RETRIEVAL_CANDIDATE_LIMIT), 100)
@@ -61,7 +71,7 @@ class CodeRetriever(Retriever):
                     source="code", query=query, chunks=[], latency_ms=0
                 )
             vector = (await embed([query]))[0]
-            scope = code_scope_filter(workspace_id, repository_id)
+            scope = code_scope_filter(workspace_id, repository_id, generation)
             result = await client.query_points(
                 collection_name=settings.CODE_COLLECTION,
                 prefetch=[
@@ -81,9 +91,15 @@ class CodeRetriever(Retriever):
                 query=models.FusionQuery(fusion=models.Fusion.RRF),
                 query_filter=scope,
                 limit=limit,
-                with_payload=False,
+                with_payload=True,
             )
-            scores = {str(point.id): float(point.score) for point in result.points}
+
+            def symbol_id(point):
+                return str(
+                    (getattr(point, "payload", None) or {}).get("symbol_id", point.id)
+                )
+
+            scores = {symbol_id(point): float(point.score) for point in result.points}
             with SessionLocal() as session:
                 rows = (
                     session.query(CodeSymbol)
@@ -97,7 +113,7 @@ class CodeRetriever(Retriever):
                 by_id = {item.id: item for item in rows}
                 chunks = []
                 for point in result.points:
-                    symbol = by_id.get(str(point.id))
+                    symbol = by_id.get(symbol_id(point))
                     if symbol is None:
                         continue
                     chunks.append(

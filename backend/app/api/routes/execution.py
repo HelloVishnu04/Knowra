@@ -1,8 +1,9 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.dependencies import Principal, get_principal, require_workspace_writer
 from app.core.config import settings
 from app.sandbox.queue import (
     create_execution_job,
@@ -11,6 +12,8 @@ from app.sandbox.queue import (
 )
 
 router = APIRouter()
+PrincipalDependency = Annotated[Principal, Depends(get_principal)]
+WriterDependency = Annotated[Principal, Depends(require_workspace_writer)]
 
 
 class RunCodeRequest(BaseModel):
@@ -19,13 +22,15 @@ class RunCodeRequest(BaseModel):
 
 
 @router.post("/execution/run", status_code=202)
-async def run_code(body: RunCodeRequest) -> dict[str, object]:
+async def run_code(
+    body: RunCodeRequest, principal: WriterDependency
+) -> dict[str, object]:
     if not settings.SANDBOX_EXECUTION_ENABLED:
         raise HTTPException(503, "Sandbox execution is disabled")
     filename = "main.py" if body.language == "python" else "main.js"
     command = "python main.py" if body.language == "python" else "node main.js"
     job = create_execution_job(
-        workspace_id=settings.LOCAL_WORKSPACE_ID,
+        workspace_id=principal.workspace_id,
         agent_run_id=None,
         repository_id=None,
         attempt=1,
@@ -41,8 +46,8 @@ async def run_code(body: RunCodeRequest) -> dict[str, object]:
 
 
 @router.get("/execution/{job_id}")
-def get_execution(job_id: str) -> dict[str, object]:
+def get_execution(job_id: str, principal: PrincipalDependency) -> dict[str, object]:
     result = execution_job(job_id)
-    if result is None or result["workspace_id"] != settings.LOCAL_WORKSPACE_ID:
+    if result is None or result["workspace_id"] != principal.workspace_id:
         raise HTTPException(404, "Execution job not found")
     return result

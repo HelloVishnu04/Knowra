@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import subprocess
 import uuid
@@ -9,7 +10,8 @@ from typing import Any
 import structlog
 from qdrant_client import AsyncQdrantClient, models
 
-from app.code.parser import ParsedReference, ParsedSymbol, parse_source
+from app.code.parser import ParsedReference, ParsedSymbol
+from app.code.parser_process import ParserFailure, parse_isolated
 from app.code.sources import (
     clone_git,
     extract_zip,
@@ -19,7 +21,9 @@ from app.code.sources import (
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.code import CodeReference, CodeSymbol, Repository
+from app.models.jobs import RepositoryJob
 from app.rag.documents import embed
+from app.workers import repository_jobs as jobs
 
 logger = structlog.get_logger(__name__)
 
@@ -30,50 +34,83 @@ def _set_status(
     *,
     error: str | None = None,
     metadata: dict[str, Any] | None = None,
+    lease: tuple[str, str] | None = None,
+    **states,
 ) -> None:
     with SessionLocal.begin() as session:
+        if lease:
+            job = jobs.guard(session, *lease)
+            job.progress = status.capitalize()
         repository = session.get(Repository, repository_id)
         if repository is None:
             return
         repository.status = status
         repository.error = error
         if metadata is not None:
-            repository.metadata_json = metadata
+            repository.metadata_json = {**(repository.metadata_json or {}), **metadata}
+        for key, value in states.items():
+            setattr(repository, key, value)
         if status == "ready":
             repository.indexed_at = datetime.now(UTC)
 
 
-def _prepare_worktree(repository: Repository) -> Path:
+def _prepare_worktree(repository: Repository, operation="import", suffix=None) -> Path:
     root = Path(repository.root_path)
+    # Reindex never fetches or extracts over a worktree, including legacy worktrees.
+    if root.is_dir():
+        return root.resolve()
+    if operation == "reindex":
+        raise ValueError("Repository checkout is missing; retry import instead")
+    if repository.source_type == "local":
+        return validate_local_path(str(repository.source_uri)).resolve()
+    staged = root.parent / (".import-" + (suffix or str(uuid.uuid4())))
     if repository.source_type == "zip":
-        archive = Path((repository.metadata_json or {}).get("archive_path", ""))
+        archive = Path(
+            repository.archive_path
+            or (repository.metadata_json or {}).get("archive_path", "")
+        )
         if not archive.is_file():
             raise ValueError("Repository ZIP is missing")
-        extract_zip(archive, root)
+        extract_zip(archive, staged)
     elif repository.source_type == "git":
-        clone_git(str(repository.source_uri), root)
-    elif repository.source_type == "local":
-        root = validate_local_path(str(repository.source_uri))
+        clone_git(str(repository.source_uri), staged)
     else:
         raise ValueError("Unsupported repository source type")
-    return root.resolve()
+    return staged.resolve()
 
 
 def _parse_repository(
     root: Path,
-) -> tuple[list[ParsedSymbol], list[ParsedReference], int]:
+    lease: tuple[str, str] | None = None,
+) -> tuple[list[ParsedSymbol], list[ParsedReference], int, list[dict[str, str]]]:
     symbols: list[ParsedSymbol] = []
     references: list[ParsedReference] = []
     files = 0
+    warnings = []
     for path, relative, language in iter_source_files(root):
-        source = path.read_text(encoding="utf-8", errors="replace")
-        parsed = parse_source(relative, language, source)
+        if lease:
+            with SessionLocal() as session:
+                jobs.guard(session, *lease)
+        files += 1
+        try:
+            with path.open("rb") as handle:
+                source = handle.read(settings.CODE_MAX_SOURCE_BYTES + 1).decode(
+                    "utf-8", errors="replace"
+                )
+            parsed = parse_isolated(relative, language, source)
+        except (ParserFailure, OSError) as exc:
+            warnings.append(
+                {
+                    "path": relative,
+                    "code": str(exc)
+                    if isinstance(exc, ParserFailure)
+                    else "file_unreadable",
+                }
+            )
+            continue
         symbols.extend(parsed.symbols)
         references.extend(parsed.references)
-        files += 1
-    if not symbols:
-        raise ValueError("No supported source files were found")
-    return symbols, references, files
+    return symbols, references, files, warnings
 
 
 def _symbol_id(repository_id: str, symbol: ParsedSymbol) -> str:
@@ -89,6 +126,8 @@ def _persist_graph(
     workspace_id: str,
     symbols: list[ParsedSymbol],
     references: list[ParsedReference],
+    lease: tuple[str, str] | None = None,
+    failed_paths: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     qualified_ids: dict[str, str] = {}
@@ -116,8 +155,13 @@ def _persist_graph(
         )
 
     with SessionLocal.begin() as session:
+        if lease:
+            jobs.guard(session, *lease)
         session.query(CodeReference).filter_by(repository_id=repository_id).delete()
-        session.query(CodeSymbol).filter_by(repository_id=repository_id).delete()
+        previous = session.query(CodeSymbol).filter_by(repository_id=repository_id)
+        if failed_paths:
+            previous = previous.filter(CodeSymbol.file_path.notin_(failed_paths))
+        previous.delete(synchronize_session=False)
         for record in records:
             symbol = record["symbol"]
             session.add(
@@ -198,23 +242,13 @@ async def _index_vectors(
     repository_id: str,
     workspace_id: str,
     records: list[dict[str, Any]],
+    generation: str,
+    lease: tuple[str, str] | None = None,
 ) -> None:
-    if await client.collection_exists(settings.CODE_COLLECTION):
-        await client.delete(
-            settings.CODE_COLLECTION,
-            points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="repository_id",
-                            match=models.MatchValue(value=repository_id),
-                        )
-                    ]
-                )
-            ),
-            wait=True,
-        )
     for start in range(0, len(records), 16):
+        if lease:
+            with SessionLocal() as session:
+                jobs.guard(session, *lease)
         batch = records[start : start + 16]
         vectors = await embed([record["embedding_text"] for record in batch])
         await _ensure_collection(client, len(vectors[0]))
@@ -223,7 +257,7 @@ async def _index_vectors(
             wait=True,
             points=[
                 models.PointStruct(
-                    id=record["id"],
+                    id=str(uuid.uuid5(uuid.UUID(generation), record["id"])),
                     vector={
                         "dense": vector,
                         "sparse": models.Document(
@@ -233,6 +267,8 @@ async def _index_vectors(
                     payload={
                         "workspace_id": workspace_id,
                         "repository_id": repository_id,
+                        "generation": generation,
+                        "symbol_id": record["id"],
                         "language": record["symbol"].language,
                         "embedding_model": settings.EMBEDDING_MODEL,
                         "sparse_model": settings.SPARSE_MODEL,
@@ -257,48 +293,137 @@ def _default_branch(root: Path) -> str | None:
 
 
 async def ingest_repository(ctx: dict[str, Any], repository_id: str) -> None:
-    del ctx
+    """Discard pre-migration Redis messages; resubmit through the authorized API."""
+    logger.warning("legacy_repository_delivery_ignored", repository_id=repository_id)
+
+
+async def _process_repository(job_id: str, token: str) -> None:
+    lease = (job_id, token)
+    with SessionLocal() as session:
+        job = session.get(RepositoryJob, job_id)
+        repository = session.get(Repository, job.repository_id)
+        operation = job.operation
+        session.expunge(repository)
+    repository_id = repository.id
+    _set_status(
+        repository_id,
+        "preparing",
+        lease=lease,
+        source_state="available" if Path(repository.root_path).is_dir() else "fetching",
+    )
+    root = await asyncio.to_thread(_prepare_worktree, repository, operation, token)
+    branch = await asyncio.to_thread(_default_branch, root)
+    with SessionLocal.begin() as session:
+        jobs.guard(session, *lease)
+        current = session.get(Repository, repository_id)
+        target = Path(current.root_path).resolve()
+        if root != target and repository.source_type != "local":
+            # Staged import is published only while holding the current job lease.
+            # An existing checkout is never removed or replaced.
+            if not target.exists():
+                root.rename(target)
+            root = target
+        current.root_path = str(root)
+        current.source_state = "available"
+        current.default_branch = branch
+    _set_status(repository_id, "parsing", lease=lease, parse_state="running")
+    symbols, references, file_count, warnings = await asyncio.to_thread(
+        _parse_repository, root, lease
+    )
+    parse_state = (
+        "partial"
+        if warnings and symbols
+        else "failed"
+        if warnings
+        else "ready"
+        if symbols
+        else "unavailable"
+    )
+    _set_status(
+        repository_id,
+        "parsing",
+        lease=lease,
+        parse_state=parse_state,
+        index_state="pending",
+        metadata={
+            "file_count": file_count,
+            "symbol_count": len(symbols),
+            "reference_count": len(references),
+            "parse_warnings": warnings[:100],
+            "parse_warning_count": len(warnings),
+        },
+    )
+    records = await asyncio.to_thread(
+        _persist_graph,
+        repository_id,
+        repository.workspace_id,
+        symbols,
+        references,
+        lease,
+        [item["path"] for item in warnings],
+    )
+    if warnings or not records or not settings.CODE_INDEX_EMBEDDINGS:
+        _set_status(repository_id, "available", lease=lease, index_state="unavailable")
+        return
+    _set_status(repository_id, "embedding", lease=lease, index_state="running")
     client = AsyncQdrantClient(url=settings.QDRANT_URL)
     try:
-        with SessionLocal() as session:
-            repository = session.get(Repository, repository_id)
-            if repository is None:
-                return
-            session.expunge(repository)
-        _set_status(repository_id, "preparing")
-        root = await asyncio.to_thread(_prepare_worktree, repository)
-        _set_status(repository_id, "parsing")
-        symbols, references, file_count = await asyncio.to_thread(
-            _parse_repository, root
+        await _index_vectors(
+            client, repository_id, repository.workspace_id, records, token, lease
         )
-        _set_status(repository_id, "embedding")
-        records = await asyncio.to_thread(
-            _persist_graph,
-            repository_id,
-            repository.workspace_id,
-            symbols,
-            references,
-        )
-        await _index_vectors(client, repository_id, repository.workspace_id, records)
-        branch = await asyncio.to_thread(_default_branch, root)
-        with SessionLocal.begin() as session:
-            current = session.get(Repository, repository_id)
-            current.root_path = str(root)
-            current.default_branch = branch
         _set_status(
             repository_id,
             "ready",
-            metadata={
-                "file_count": file_count,
-                "symbol_count": len(symbols),
-                "reference_count": len(references),
-            },
+            lease=lease,
+            index_state="ready",
+            metadata={"index_generation": token},
         )
-    except Exception as exc:
-        logger.exception(
-            "code_repository_ingestion_failed", repository_id=repository_id
-        )
-        _set_status(repository_id, "failed", error=str(exc)[:1000])
-        raise
     finally:
         await client.close()
+
+
+async def run_repository_job(ctx: dict[str, Any], job_id: str) -> None:
+    token = jobs.claim(job_id)
+    if token is None:
+        return
+
+    async def keep_alive():
+        while True:
+            await asyncio.sleep(20)
+            jobs.heartbeat(job_id, token)
+
+    processing = asyncio.create_task(_process_repository(job_id, token))
+    pulse = asyncio.create_task(keep_alive())
+    try:
+        with SessionLocal() as session:
+            remaining = max(
+                0,
+                (
+                    jobs.utc(session.get(RepositoryJob, job_id).deadline_at)
+                    - datetime.now(UTC)
+                ).total_seconds(),
+            )
+        done, _ = await asyncio.wait(
+            {processing, pulse}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+        )
+        if not done:
+            raise TimeoutError("Repository job deadline exceeded")
+        for task in done:
+            task.result()
+        with SessionLocal.begin() as session:
+            job = jobs.guard(session, job_id, token)
+            job.progress = "Processing complete"
+            jobs.finish(session, job, "succeeded")
+    except jobs.LeaseLost:
+        # Revocation/recovery owns the final state. No stale worker writes.
+        jobs.reconcile()
+    except Exception:
+        logger.exception("repository_job_failed", job_id=job_id)
+        with SessionLocal.begin() as session, contextlib.suppress(jobs.LeaseLost):
+            job = jobs.guard(session, job_id, token)
+            jobs.finish(session, job, "failed", "ingestion_failed")
+        jobs.reconcile()
+    finally:
+        for task in (processing, pulse):
+            task.cancel()
+        await asyncio.gather(processing, pulse, return_exceptions=True)

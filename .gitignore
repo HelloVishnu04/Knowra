@@ -14,6 +14,9 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+.phase9-venv/
+artifacts/phase9/
+backups/
 .mypy_cache/
 .ruff_cache/
 
@@ -41,7 +44,12 @@ hr_contacts.csv
 company_names.csv
 tmp/
 implementation.md
-OmniRAG_Project_Implementation_Report.docx
+ethsdghfOmniRAG_Project_Implementation_Report.docx
 docx_text.txt
 phase1.md
-software_trainee_campaign_100.csv
+
+.remotion/
+node_modules/
+
+.remotion/
+node_modules/

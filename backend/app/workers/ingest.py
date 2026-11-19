@@ -5,17 +5,28 @@ import uuid
 from pathlib import Path
 from typing import ClassVar
 
+from arq import cron
 from arq.connections import RedisSettings
 from qdrant_client import AsyncQdrantClient, models
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.core.worker_health import start_worker_heartbeat, stop_worker_heartbeat
 from app.models.knowledge import Document, DocumentChunk, DocumentVersion, KnowledgeBase
 from app.rag.documents import embed
 from app.storage.objects import object_store
-from app.workers.code_ingest import ingest_repository
+from app.workers.code_ingest import ingest_repository, run_repository_job
+from app.workers.repository_jobs import dispatch_repository_jobs
 
 logger = logging.getLogger(__name__)
+
+
+async def startup(ctx):
+    await start_worker_heartbeat(ctx, "ingest")
+
+
+async def shutdown(ctx):
+    await stop_worker_heartbeat(ctx, "ingest")
 
 
 async def ensure_collection(client: AsyncQdrantClient, vector_size: int) -> None:
@@ -164,8 +175,13 @@ async def ingest_document(ctx, document_id: str):
 
 
 class WorkerSettings:
-    functions: ClassVar = [ingest_document, ingest_repository]
+    functions: ClassVar = [ingest_document, ingest_repository, run_repository_job]
+    cron_jobs: ClassVar = [
+        cron(dispatch_repository_jobs, second={0, 15, 30, 45}, run_at_startup=True)
+    ]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
+    on_startup = startup
+    on_shutdown = shutdown
     max_jobs = 1
     job_timeout = 1800
     max_tries = 1

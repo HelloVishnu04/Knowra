@@ -15,12 +15,21 @@ from arq.connections import RedisSettings
 from app.code.sources import safe_repository_path
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.core.worker_health import start_worker_heartbeat, stop_worker_heartbeat
 from app.models.runs import ExecutionJob
 from app.sandbox.queue import command_argv
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+async def startup(ctx):
+    await start_worker_heartbeat(ctx, "sandbox")
+
+
+async def shutdown(ctx):
+    await stop_worker_heartbeat(ctx, "sandbox")
 
 
 def _set_running(job_id: str) -> None:
@@ -255,6 +264,8 @@ async def execute_sandbox_job(ctx, job_id: str) -> None:
 class WorkerSettings:
     functions: ClassVar = [execute_sandbox_job]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
+    on_startup = startup
+    on_shutdown = shutdown
     queue_name = settings.SANDBOX_QUEUE
     max_jobs = 1
     job_timeout = settings.SANDBOX_WALL_TIMEOUT_SECONDS + 120

@@ -6,16 +6,29 @@ import structlog
 
 from app.core.config import settings
 from app.llm.base import LLMProvider
+from app.llm.urls import assert_provider_egress_allowed
 
 logger = structlog.get_logger(__name__)
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(self):
-        self.base_url = settings.OLLAMA_BASE_URL
+    def __init__(self, base_url: str | None = None):
+        self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
+
+    async def list_models(self) -> list[str]:
+        await assert_provider_egress_allowed(self.base_url)
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            response = await client.get(f"{self.base_url}/api/tags", timeout=10.0)
+            response.raise_for_status()
+            return sorted(
+                str(item["name"])
+                for item in response.json().get("models", [])
+                if isinstance(item, dict) and item.get("name")
+            )
 
     async def chat(self, messages: list[dict], model: str) -> str:
-        async with httpx.AsyncClient() as client:
+        await assert_provider_egress_allowed(self.base_url)
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             try:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
@@ -32,7 +45,8 @@ class OllamaProvider(LLMProvider):
     async def stream_chat(
         self, messages: list[dict], model: str
     ) -> AsyncGenerator[str, None]:
-        async with httpx.AsyncClient() as client:
+        await assert_provider_egress_allowed(self.base_url)
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             try:
                 async with client.stream(
                     "POST",

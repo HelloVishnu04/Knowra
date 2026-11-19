@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import Principal, get_principal, require_workspace_writer
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.knowledge import Document, DocumentChunk, DocumentVersion, KnowledgeBase
@@ -16,6 +17,8 @@ from app.storage.objects import object_store
 
 router = APIRouter()
 SessionDependency = Annotated[Session, Depends(get_session)]
+PrincipalDependency = Annotated[Principal, Depends(get_principal)]
+WriterDependency = Annotated[Principal, Depends(require_workspace_writer)]
 
 
 class CreateKnowledgeBase(BaseModel):
@@ -23,9 +26,9 @@ class CreateKnowledgeBase(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
-def require_kb(session: Session, kb_id: str):
+def require_kb(session: Session, kb_id: str, workspace_id: str):
     kb = session.get(KnowledgeBase, kb_id)
-    if kb is None or kb.workspace_id != settings.LOCAL_WORKSPACE_ID:
+    if kb is None or kb.workspace_id != workspace_id:
         raise HTTPException(404, "Knowledge base not found")
     return kb
 
@@ -43,22 +46,24 @@ async def enqueue(document_id: str):
 
 
 @router.get("/knowledge-bases")
-def list_kbs(session: SessionDependency):
+def list_kbs(session: SessionDependency, principal: PrincipalDependency):
     return [
         {"id": kb.id, "name": kb.name, "description": kb.description}
         for kb in session.query(KnowledgeBase)
-        .filter_by(workspace_id=settings.LOCAL_WORKSPACE_ID)
+        .filter_by(workspace_id=principal.workspace_id)
         .order_by(KnowledgeBase.created_at.desc())
         .all()
     ]
 
 
 @router.post("/knowledge-bases", status_code=201)
-def create_kb(body: CreateKnowledgeBase, session: SessionDependency):
+def create_kb(
+    body: CreateKnowledgeBase, session: SessionDependency, principal: WriterDependency
+):
     kb = KnowledgeBase(
         name=body.name.strip(),
         description=body.description,
-        workspace_id=settings.LOCAL_WORKSPACE_ID,
+        workspace_id=principal.workspace_id,
     )
     session.add(kb)
     session.commit()
@@ -66,8 +71,10 @@ def create_kb(body: CreateKnowledgeBase, session: SessionDependency):
 
 
 @router.get("/knowledge-bases/{kb_id}/documents")
-def list_documents(kb_id: str, session: SessionDependency):
-    require_kb(session, kb_id)
+def list_documents(
+    kb_id: str, session: SessionDependency, principal: PrincipalDependency
+):
+    require_kb(session, kb_id, principal.workspace_id)
     return [
         document_json(d)
         for d in session.query(Document)
@@ -78,8 +85,13 @@ def list_documents(kb_id: str, session: SessionDependency):
 
 
 @router.post("/knowledge-bases/{kb_id}/documents", status_code=202)
-async def upload(kb_id: str, file: UploadFile, session: SessionDependency):
-    require_kb(session, kb_id)
+async def upload(
+    kb_id: str,
+    file: UploadFile,
+    session: SessionDependency,
+    principal: WriterDependency,
+):
+    require_kb(session, kb_id, principal.workspace_id)
     name = (file.filename or "").replace("\\", "/").split("/")[-1]
     suffix = Path(name).suffix.lower()
     if suffix not in {".pdf", ".docx", ".pptx", ".xlsx"}:
@@ -96,7 +108,7 @@ async def upload(kb_id: str, file: UploadFile, session: SessionDependency):
     ):
         raise HTTPException(422, "File contents do not match the document type")
     document_id = str(uuid4())
-    key = f"{settings.LOCAL_WORKSPACE_ID}/{document_id}/original{suffix}"
+    key = f"{principal.workspace_id}/{document_id}/original{suffix}"
     store = object_store()
     await asyncio.to_thread(store.put, key, data)
     doc = Document(
@@ -122,8 +134,13 @@ async def upload(kb_id: str, file: UploadFile, session: SessionDependency):
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/{document_id}/retry", status_code=202)
-async def retry(kb_id: str, document_id: str, session: SessionDependency):
-    require_kb(session, kb_id)
+async def retry(
+    kb_id: str,
+    document_id: str,
+    session: SessionDependency,
+    principal: WriterDependency,
+):
+    require_kb(session, kb_id, principal.workspace_id)
     updated = (
         session.query(Document)
         .filter_by(id=document_id, knowledge_base_id=kb_id, status="failed")
@@ -145,7 +162,9 @@ async def retry(kb_id: str, document_id: str, session: SessionDependency):
 
 
 @router.get("/chunks/{chunk_id}")
-def get_chunk(chunk_id: str, session: SessionDependency):
+def get_chunk(
+    chunk_id: str, session: SessionDependency, principal: PrincipalDependency
+):
     row = (
         session.query(DocumentChunk, Document)
         .join(Document)
@@ -153,7 +172,7 @@ def get_chunk(chunk_id: str, session: SessionDependency):
         .filter(
             DocumentChunk.id == chunk_id,
             Document.status == "ready",
-            KnowledgeBase.workspace_id == settings.LOCAL_WORKSPACE_ID,
+            KnowledgeBase.workspace_id == principal.workspace_id,
         )
         .first()
     )

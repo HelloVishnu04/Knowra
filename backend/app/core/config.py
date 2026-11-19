@@ -1,3 +1,8 @@
+import base64
+import json
+from typing import Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -5,7 +10,10 @@ class Settings(BaseSettings):
     # App
     PROJECT_NAME: str = "Knowra API"
     VERSION: str = "1.0.0"
+    APP_ENVIRONMENT: Literal["development", "test", "production"] = "development"
     API_V1_STR: str = "/api/v1"
+    DIAGNOSTIC_TIMEOUT_SECONDS: float = 2.0
+    ALLOW_MODEL_DOWNLOADS: bool = False
 
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/omnirag"
@@ -41,6 +49,11 @@ class Settings(BaseSettings):
     CODE_MAX_EXTRACTED_BYTES: int = 250 * 1024 * 1024
     CODE_MAX_FILES: int = 20000
     CODE_MAX_SOURCE_BYTES: int = 1024 * 1024
+    CODE_PARSER_TIMEOUT_SECONDS: int = 20
+    CODE_PARSER_MEMORY_MB: int = 512
+    CODE_INDEX_EMBEDDINGS: bool = False
+    EDITOR_MAX_FILE_BYTES: int = 1024 * 1024
+    EDITOR_MAX_WORKSPACE_BYTES: int = 64 * 1024 * 1024
     SANDBOX_EXECUTION_ENABLED: bool = False
     SANDBOX_QUEUE: str = "queue:sandbox"
     SANDBOX_PYTHON_IMAGE: str = "knowra-sandbox-python:phase8"
@@ -54,7 +67,22 @@ class Settings(BaseSettings):
     # Auth
     JWT_SECRET: str = "changeme"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 8
+    AUTH_REQUIRED: bool = False
+    AUTH_COOKIE_SECURE: bool = False
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    REGISTRATION_ENABLED: bool = True
+    AUTH_FAILURE_LIMIT: int = 5
+    AUTH_FAILURE_WINDOW_MINUTES: int = 15
+    AUTH_LOCKOUT_MINUTES: int = 15
+
+    # Provider network policy
+    PROVIDER_BLOCK_PRIVATE_NETWORKS: bool = False
+    PROVIDER_PRIVATE_HOST_ALLOWLIST: str = ""
+    PROVIDER_ENCRYPTION_ACTIVE_KEY_ID: str = "local-v1"
+    PROVIDER_ENCRYPTION_KEYS: str = ""
+    PROVIDER_ALLOW_LEGACY_JWT_KEY: bool = True
 
     # LLM Providers
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -68,6 +96,41 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        if self.APP_ENVIRONMENT != "production":
+            return self
+        weak_secrets = {"changeme", "local-development-change-me", ""}
+        if self.JWT_SECRET in weak_secrets or len(self.JWT_SECRET) < 32:
+            raise ValueError(
+                "Production JWT_SECRET must be a unique value of 32+ characters"
+            )
+        if not self.AUTH_REQUIRED:
+            raise ValueError("Production requires AUTH_REQUIRED=true")
+        if not self.AUTH_COOKIE_SECURE:
+            raise ValueError("Production requires AUTH_COOKIE_SECURE=true")
+        if not self.PROVIDER_BLOCK_PRIVATE_NETWORKS:
+            raise ValueError("Production requires PROVIDER_BLOCK_PRIVATE_NETWORKS=true")
+        try:
+            keyring = json.loads(self.PROVIDER_ENCRYPTION_KEYS)
+            active_key = keyring[self.PROVIDER_ENCRYPTION_ACTIVE_KEY_ID]
+            decoded_key = base64.urlsafe_b64decode(active_key)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "Production requires a valid PROVIDER_ENCRYPTION_KEYS keyring "
+                "containing PROVIDER_ENCRYPTION_ACTIVE_KEY_ID"
+            ) from exc
+        if (
+            not isinstance(keyring, dict)
+            or not isinstance(active_key, str)
+            or len(decoded_key) != 32
+            or ":" in self.PROVIDER_ENCRYPTION_ACTIVE_KEY_ID
+        ):
+            raise ValueError(
+                "Production provider encryption keys must be named Fernet keys"
+            )
+        return self
 
 
 settings = Settings()

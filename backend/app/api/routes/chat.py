@@ -1,16 +1,18 @@
 import asyncio
 import json
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from structlog.contextvars import get_contextvars
 
 from app.agents.graph import AgentOrchestrator
-from app.core.config import settings
+from app.api.dependencies import Principal, require_workspace_writer
+from app.core.database import get_session
 from app.llm.gateway import gateway
 
 logger = structlog.get_logger(__name__)
@@ -34,7 +36,12 @@ class ChatRequest(BaseModel):
 
 
 @router.post("")
-async def chat(request_body: ChatRequest, request: Request):
+async def chat(
+    request_body: ChatRequest,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_workspace_writer)],
+):
     run_id = str(get_contextvars().get("run_id") or uuid.uuid4())
     logger.info(
         "chat_request",
@@ -44,9 +51,17 @@ async def chat(request_body: ChatRequest, request: Request):
         requested_route=request_body.route,
     )
     try:
-        provider = gateway.get_provider(request_body.provider)
+        if principal.user is not None and request_body.provider != "ollama":
+            provider, _ = gateway.get_configured_provider(
+                session,
+                request_body.provider,
+                str(principal.user.id),
+                principal.workspace_id,
+            )
+        else:
+            provider = gateway.get_provider(request_body.provider)
     except ValueError as exc:
-        raise HTTPException(400, "Unknown provider") from exc
+        raise HTTPException(400, str(exc)) from exc
 
     messages = [message.model_dump() for message in request_body.messages]
     queue: asyncio.Queue[dict[str, Any]] | None = (
@@ -60,7 +75,7 @@ async def chat(request_body: ChatRequest, request: Request):
     try:
         state = orchestrator.initial_state(
             run_id=run_id,
-            workspace_id=settings.LOCAL_WORKSPACE_ID,
+            workspace_id=principal.workspace_id,
             messages=messages,
             provider=request_body.provider,
             model=request_body.model,
@@ -79,11 +94,19 @@ async def chat(request_body: ChatRequest, request: Request):
                 async for event in orchestrator.stream(state):
                     if event.get("error"):
                         logger.error("agent_stream_failed", error=event["error"])
+                        error_text = str(event["error"])
+                        if "connection" in error_text.lower():
+                            message = (
+                                "Could not connect to the selected model provider. "
+                                "Open Models & Providers and run Test connection."
+                            )
+                        elif "401" in error_text or "403" in error_text:
+                            message = "The model provider rejected the API key."
+                        else:
+                            message = "Generation failed. Check the run trace."
                         yield (
                             "event: error\ndata: "
-                            + json.dumps(
-                                {"error": "Generation failed. Check the run trace."}
-                            )
+                            + json.dumps({"error": message})
                             + "\n\n"
                         )
                         return

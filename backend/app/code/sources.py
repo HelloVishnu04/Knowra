@@ -140,6 +140,8 @@ def iter_source_files(root: Path) -> Iterator[tuple[Path, str, str]]:
     for path in root.rglob("*"):
         if not path.is_file() or path.is_symlink():
             continue
+        if not path.resolve().is_relative_to(root.resolve()):
+            continue
         relative = path.relative_to(root).as_posix()
         if any(part in IGNORED_DIRECTORIES for part in path.relative_to(root).parts):
             continue

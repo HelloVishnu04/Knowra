@@ -3,8 +3,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tree_sitter_language_pack import get_parser
-
 LANGUAGES: dict[str, str] = {
     ".c": "c",
     ".cc": "cpp",
@@ -143,7 +141,9 @@ def _node_text(node: Any, source: bytes) -> str:
 
 
 def _identifier(node: Any, source: bytes) -> str:
-    named = node.child_by_field_name("name") or node.child_by_field_name("declarator")
+    named = node.child_by_field_name("name")
+    if named is None:
+        named = node.child_by_field_name("declarator")
     if named is not None:
         candidates = list(named.named_children)
         while candidates:
@@ -246,7 +246,11 @@ def _qualified_name(symbol: ParsedSymbol, symbols: list[ParsedSymbol]) -> str:
 
 def _reference_target(node: Any, source: bytes) -> str:
     target = node.child_by_field_name("function")
-    value = _node_text(target or node, source).split("(", 1)[0].strip()
+    value = (
+        _node_text(target if target is not None else node, source)
+        .split("(", 1)[0]
+        .strip()
+    )
     matches = re.findall(r"[A-Za-z_$][\w$]*", value)
     return matches[-1] if matches else ""
 
@@ -259,6 +263,8 @@ def _import_targets(node: Any, source: bytes) -> list[str]:
 
 
 def parse_source(path: str, language: str, source_text: str) -> ParsedFile:
+    from tree_sitter_language_pack import get_parser
+
     source = source_text.encode("utf-8")
     parser = get_parser(language)
     tree = parser.parse(source)
@@ -289,7 +295,9 @@ def parse_source(path: str, language: str, source_text: str) -> ParsedFile:
         variable = _variable_function(node, source)
         if variable:
             name, kind = variable
-            node = node.child_by_field_name("value") or node
+            value = node.child_by_field_name("value")
+            if value is not None:
+                node = value
         if not kind or not name:
             continue
         symbols.append(

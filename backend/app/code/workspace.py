@@ -14,6 +14,8 @@ from app.code.sources import (
 )
 from app.core.database import SessionLocal
 from app.models.code import CodeReference, CodeSymbol, Repository
+from app.models.jobs import RepositoryJob
+from app.workers.repository_jobs import job_json
 
 SessionFactory = Callable[[], Session]
 
@@ -47,6 +49,23 @@ class CodeWorkspace:
                     if item.source_type == "git"
                     else None,
                     "status": item.status,
+                    "job": job_json(job)
+                    if item.active_job_id
+                    and (job := session.get(RepositoryJob, item.active_job_id))
+                    else None,
+                    "source_state": "available"
+                    if Path(item.root_path).is_dir()
+                    else "failed"
+                    if item.source_state == "available"
+                    else item.source_state,
+                    "parse_state": item.parse_state,
+                    "index_state": item.index_state,
+                    "parse_warning_count": int(
+                        (item.metadata_json or {}).get("parse_warning_count", 0)
+                    ),
+                    "parse_warnings": (item.metadata_json or {}).get(
+                        "parse_warnings", []
+                    ),
                     "error": item.error,
                     "default_branch": item.default_branch,
                     "indexed_at": item.indexed_at.isoformat()
@@ -63,7 +82,7 @@ class CodeWorkspace:
     def tree(self, repository_id: str, workspace_id: str) -> list[dict[str, Any]]:
         repository = self.repository(repository_id, workspace_id)
         root = Path(repository.root_path).resolve()
-        if repository.status != "ready" or not root.is_dir():
+        if not root.is_dir():
             return []
         entries: list[dict[str, Any]] = []
         for current, directories, files in os.walk(root):
@@ -102,6 +121,15 @@ class CodeWorkspace:
         if target.stat().st_size > 2 * 1024 * 1024:
             raise RepositorySourceError("File is too large to display")
         lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+        if not lines and start == 1:
+            return {
+                "path": path,
+                "language": target.suffix.lower().lstrip("."),
+                "start_line": 1,
+                "end_line": 1,
+                "total_lines": 0,
+                "content": "",
+            }
         first = max(1, start)
         last = min(len(lines), end if end is not None else first + 499)
         if last < first:
