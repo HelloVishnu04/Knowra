@@ -71,6 +71,10 @@ app.add_middleware(
 async def csrf_middleware(request: Request, call_next):
     unsafe_method = request.method in {"POST", "PUT", "PATCH", "DELETE"}
     api_request = request.url.path.startswith(settings.API_V1_STR)
+    is_auth_entry = request.url.path in {
+        f"{settings.API_V1_STR}/auth/login",
+        f"{settings.API_V1_STR}/auth/register",
+    }
     authorization = request.headers.get("authorization", "")
     bearer_authenticated = authorization.lower().startswith("bearer ")
     cookie_authenticated = bool(
@@ -79,6 +83,7 @@ async def csrf_middleware(request: Request, call_next):
     if (
         unsafe_method
         and api_request
+        and not is_auth_entry
         and cookie_authenticated
         and not bearer_authenticated
     ):

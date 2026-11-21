@@ -14,14 +14,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
-  const [registrationEnabled, setRegistrationEnabled] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'register') {
+        setMode('register');
+      }
+    }
     api<CurrentUser>('/auth/me').then(() => router.replace('/chat')).catch(() => undefined);
     api<{ registration_enabled: boolean }>('/auth/config')
       .then(config => setRegistrationEnabled(config.registration_enabled))
-      .catch(() => setRegistrationEnabled(false));
+      .catch(() => setRegistrationEnabled(true));
   }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
