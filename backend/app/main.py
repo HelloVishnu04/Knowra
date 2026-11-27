@@ -93,10 +93,20 @@ async def csrf_middleware(request: Request, call_next):
             correlation_id = str(
                 getattr(request.state, "correlation_id", "csrf-rejected")
             )
-            return JSONResponse(
+            resp = JSONResponse(
                 status_code=403,
                 content=error_payload(403, "CSRF validation failed", correlation_id),
             )
+            origin = request.headers.get("origin")
+            allowed = [
+                o.strip()
+                for o in settings.CORS_ALLOWED_ORIGINS.split(",")
+                if o.strip()
+            ]
+            if origin and (origin in allowed or "*" in allowed):
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Credentials"] = "true"
+            return resp
     return await call_next(request)
 
 

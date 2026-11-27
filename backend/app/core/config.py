@@ -84,6 +84,22 @@ class Settings(BaseSettings):
     PROVIDER_ENCRYPTION_KEYS: str = ""
     PROVIDER_ALLOW_LEGACY_JWT_KEY: bool = True
 
+    # Web retrieval
+    WEB_RETRIEVAL_ENABLED: bool = True
+    WEB_SEARCH_PROVIDER: Literal["duckduckgo", "tavily", "searxng", "brave"] = (
+        "duckduckgo"
+    )
+    WEB_SEARCH_API_KEY: str = ""
+    WEB_SEARXNG_URL: str = ""
+    WEB_TIMEOUT_SECONDS: float = 10.0
+    WEB_MAX_RESULTS: int = 5
+    WEB_FETCH_PAGE_CONTENT: bool = True
+    WEB_MAX_PAGE_BYTES: int = 512 * 1024
+    WEB_MAX_CONTENT_CHARS: int = 2500
+    WEB_BLOCK_PRIVATE_NETWORKS: bool = True
+    WEB_ALLOWED_DOMAINS: str = ""
+    WEB_BLOCKED_DOMAINS: str = ""
+
     # LLM Providers
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OPENAI_API_KEY: str | None = None

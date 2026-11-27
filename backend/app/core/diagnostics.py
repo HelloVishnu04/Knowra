@@ -153,8 +153,11 @@ def feature_status() -> dict[str, dict[str, Any]]:
             ),
         },
         "web_retrieval": {
-            "status": "unavailable",
-            "reason": "retriever_not_configured",
+            "status": "available" if settings.WEB_RETRIEVAL_ENABLED else "disabled",
+            "provider": settings.WEB_SEARCH_PROVIDER,
+            "reason": (
+                None if settings.WEB_RETRIEVAL_ENABLED else "disabled_by_configuration"
+            ),
         },
     }
 

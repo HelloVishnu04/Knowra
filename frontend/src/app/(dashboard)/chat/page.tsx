@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { API_URL, api, ModelProvider } from '@/lib/api';
+import { API_URL, api, csrfToken, ModelProvider } from '@/lib/api';
 import { Citation, Citations } from '@/components/citations';
 import { ChatStreamDecoder } from '@/lib/sse';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -27,18 +27,19 @@ export default function ChatPage() {
   const [providerId, setProviderId] = useState('');
   const [model, setModel] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [bases, setBases] = useState<{id: string; name: string}[]>([]);
+  const [bases, setBases] = useState<{ id: string; name: string }[]>([]);
   const [kb, setKb] = useState('');
-  const [repositories, setRepositories] = useState<{id: string; name: string; status: string}[]>([]);
+  const [repositories, setRepositories] = useState<{ id: string; name: string; status: string }[]>([]);
   const [repositoryId, setRepositoryId] = useState('');
+  const [route, setRoute] = useState<'auto' | 'direct' | 'web' | 'document' | 'sql' | 'code' | 'multi'>('auto');
   useEffect(() => {
     const selected = new URLSearchParams(window.location.search).get('kb');
     const selectedRepository = new URLSearchParams(window.location.search).get('repository');
-    api<{id: string; name: string}[]>('/knowledge-bases').then(value => {
+    api<{ id: string; name: string }[]>('/knowledge-bases').then(value => {
       setBases(value);
       if (selected && value.some(base => base.id === selected)) setKb(selected);
     }).catch(console.error);
-    api<{id: string; name: string; status: string}[]>('/repositories').then(value => {
+    api<{ id: string; name: string; status: string }[]>('/repositories').then(value => {
       setRepositories(value.filter(repository => repository.status === 'ready'));
       if (selectedRepository && value.some(repository => repository.id === selectedRepository && repository.status === 'ready')) setRepositoryId(selectedRepository);
     }).catch(console.error);
@@ -87,19 +88,28 @@ export default function ChatPage() {
         stream: true
         , knowledge_base_id: kb || null
         , repository_id: repositoryId || null
+        stream: true,
+        route: route,
+        knowledge_base_id: kb || null,
+        repository_id: repositoryId || null,
       };
 
       const apiUrl = API_URL;
+      const csrf = csrfToken();
       const res = await fetch(`${apiUrl}/api/v1/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
         credentials: 'include',
         body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
         const error = await res.json().catch(() => ({}));
-        throw new Error(typeof error.detail === 'string' ? error.detail : 'Failed to fetch chat');
+        const message = error.detail || error.error?.message || 'Failed to fetch chat';
+        throw new Error(typeof message === 'string' ? message : JSON.stringify(message));
       }
       if (!res.body) throw new Error('No readable stream');
 
@@ -113,23 +123,23 @@ export default function ChatPage() {
         done = doneReading;
         if (value) {
           for (const dataStr of decoder.push(value)) {
-              if (dataStr === '[DONE]') {
-                done = true;
-                completed = true;
-                break;
-              }
-              if (!dataStr) continue;
-                const data = JSON.parse(dataStr);
-                if (data.error) throw new Error(data.error);
-                setMessages(prev =>
-                  prev.map(m => m.id === assistantId ? {
-                    ...m,
-                    content: m.content + (data.content || ''),
-                    citations: data.citations ?? m.citations,
-                    runId: data.run_id ?? m.runId,
-                    route: data.route ?? m.route,
-                  } : m)
-                );
+            if (dataStr === '[DONE]') {
+              done = true;
+              completed = true;
+              break;
+            }
+            if (!dataStr) continue;
+            const data = JSON.parse(dataStr);
+            if (data.error) throw new Error(data.error);
+            setMessages(prev =>
+              prev.map(m => m.id === assistantId ? {
+                ...m,
+                content: m.content + (data.content || ''),
+                citations: data.citations ?? m.citations,
+                runId: data.run_id ?? m.runId,
+                route: data.route ?? m.route,
+              } : m)
+            );
           }
         }
       }
@@ -137,7 +147,7 @@ export default function ChatPage() {
       if (!completed) throw new Error('The response was interrupted. Please retry.');
     } catch (error) {
       console.error(error);
-      setMessages(prev => 
+      setMessages(prev =>
         prev.map(m => m.id === assistantId ? { ...m, content: `Error: ${error instanceof Error ? error.message : 'Could not reach the model.'}` } : m)
       );
     } finally {
@@ -157,6 +167,15 @@ export default function ChatPage() {
           <option value="">No code repository</option>
           {repositories.map(repository => <option key={repository.id} value={repository.id}>{repository.name}</option>)}
         </select>
+        <select aria-label="Retrieval mode" disabled={loading} value={route} className="border rounded p-1 text-sm" onChange={e => setRoute(e.target.value as typeof route)}>
+          <option value="auto">Auto route</option>
+          <option value="web">Web search</option>
+          <option value="direct">Direct (LLM only)</option>
+          <option value="document">Documents</option>
+          <option value="code">Code</option>
+          <option value="sql">SQL</option>
+          <option value="multi">Multi-source</option>
+        </select>
         <div className="flex items-center gap-2 text-sm">
           <span className="text-gray-500">Provider:</span>
           <select
@@ -169,8 +188,8 @@ export default function ChatPage() {
             {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
           </select>
           <span className="text-gray-500">Model:</span>
-          <select 
-            value={model} 
+          <select
+            value={model}
             onChange={e => setModel(e.target.value)}
             className="border rounded px-2 py-1 bg-transparent"
           >
@@ -223,16 +242,16 @@ export default function ChatPage() {
 
       <div className="p-4 bg-white dark:bg-gray-800 border-t flex-shrink-0">
         <form onSubmit={handleSubmit} className="max-w-3xl mx-auto relative flex items-center">
-          <Input 
+          <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask anything..."
             className="w-full pr-12 rounded-full shadow-sm border-gray-300 dark:border-gray-600 focus-visible:ring-primary"
             disabled={loading || !providerId || !model}
           />
-          <Button 
-            type="submit" 
-            size="icon" 
+          <Button
+            type="submit"
+            size="icon"
             className="absolute right-1 rounded-full h-8 w-8"
             disabled={loading || !input.trim() || !providerId || !model}
           >

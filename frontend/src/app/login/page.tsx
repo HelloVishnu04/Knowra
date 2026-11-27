@@ -18,16 +18,15 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('mode') === 'register') {
-        setMode('register');
-      }
-    }
+    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const timer = params?.get('mode') === 'register'
+      ? setTimeout(() => setMode('register'), 0)
+      : undefined;
     api<CurrentUser>('/auth/me').then(() => router.replace('/chat')).catch(() => undefined);
     api<{ registration_enabled: boolean }>('/auth/config')
       .then(config => setRegistrationEnabled(config.registration_enabled))
       .catch(() => setRegistrationEnabled(true));
+    return () => { if (timer) clearTimeout(timer); };
   }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {

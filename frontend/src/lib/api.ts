@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-function csrfToken(): string | null {
+export function csrfToken(): string | null {
   if (typeof document === 'undefined') return null;
   const cookie = document.cookie
     .split('; ')

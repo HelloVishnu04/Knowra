@@ -21,6 +21,7 @@ from app.rag.documents import DocumentRetriever
 from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.rerank import rerank
 from app.rag.sql import SensitiveSQLApprovalRequired, SQLRetriever
+from app.rag.web import WebRetriever
 from app.sandbox.queue import QueuedSandboxRunner
 
 Route = Literal["direct", "document", "web", "sql", "code", "multi"]
@@ -58,7 +59,7 @@ class AgentState(TypedDict, total=False):
 
 SOURCE_PATTERNS: dict[str, tuple[str, ...]] = {
     "web": (
-        r"\b(latest|today|current|recent|news|online|website|web)\b",
+        r"\b(latest|today|current|recent|news|online|website|web|internet)\b",
         r"https?://",
     ),
     "sql": (
@@ -208,6 +209,8 @@ class AgentOrchestrator:
             retriever = SQLRetriever.from_settings(self.provider, model=state["model"])
         if retriever is None and source == "code":
             retriever = CodeRetriever()
+        if retriever is None and source == "web":
+            retriever = WebRetriever()
         if retriever is None:
             raise RuntimeError(f"{source} retrieval is not configured yet")
         filters: dict[str, Any] = {"rerank": False}
